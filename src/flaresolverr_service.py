@@ -17,6 +17,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.wait import WebDriverWait
 
 import utils
+from actions import execute_actions
 from dtos import (STATUS_ERROR, STATUS_OK, ChallengeResolutionResultT,
                   ChallengeResolutionT, HealthResponse, IndexResponse,
                   V1RequestBase, V1ResponseBase)
@@ -463,6 +464,23 @@ def _evil_logic(req: V1RequestBase, driver: WebDriver, method: str) -> Challenge
         logging.info("Challenge not detected!")
         res.message = "Challenge not detected!"
 
+    # Execute actions if provided
+    action_results = None
+    if req.actions is not None and len(req.actions) > 0:
+        logging.info(f"Executing {len(req.actions)} post-challenge action(s)...")
+        try:
+            action_results = execute_actions(req.actions, driver)
+            logging.info(f"Actions completed: {action_results.summary}")
+            
+            # Raise exception if any actions failed
+            if action_results.failed > 0:
+                failed_actions = [r for r in action_results.details if r.status == 'failed']
+                error_messages = [f"Action {r.index} ({r.type}): {r.error}" for r in failed_actions]
+                raise Exception(f"Action execution failed. {action_results.failed} action(s) failed: " + "; ".join(error_messages))
+        except Exception as e:
+            logging.error(f"Action execution error: {str(e)}")
+            raise
+
     challenge_res = ChallengeResolutionResultT({})
     challenge_res.url = driver.current_url
     challenge_res.status = 200  # todo: fix, selenium not provides this info
@@ -481,6 +499,10 @@ def _evil_logic(req: V1RequestBase, driver: WebDriver, method: str) -> Challenge
 
     if req.returnScreenshot:
         challenge_res.screenshot = driver.get_screenshot_as_base64()
+
+    # Add action results to response if actions were executed
+    if action_results is not None:
+        challenge_res.actionResults = action_results.to_dict()
 
     res.result = challenge_res
     return res
